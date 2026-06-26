@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Average Calculator with Chart</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 2rem;
+      background-color: #f7f7f7;
+      color: #333;
+    }
+    .container {
+      max-width: 800px;
+      margin: auto;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #1a1a1a;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1rem;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 0.75rem;
+      text-align: center;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+    input[type="number"] {
+      width: 100%;
+      padding: 0.5rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .btn {
+      padding: 0.6rem 1rem;
+      margin-right: 0.5rem;
+      cursor: pointer;
+      border: none;
+      color: white;
+      font-size: 0.9rem;
+      font-weight: bold;
+      border-radius: 5px;
+      transition: background-color 0.2s ease;
+    }
+    .btn-add { background-color: #007bff; }
+    .btn-add:hover { background-color: #0056b3; }
+    .btn-reset { background-color: #dc3545; }
+    .btn-reset:hover { background-color: #c82333; }
+    .btn-remove { background-color: #6c757d; }
+    .btn-remove:hover { background-color: #5a6268; }
+    
+    .input-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+    }
+    .input-group label {
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+    
+    #results {
+      margin-top: 1.5rem;
+      background: #fdfdff;
+      padding: 1.5rem;
+      border: 1px solid #e0e0e0;
+      border-radius: 5px;
+      line-height: 1.8;
+      font-size: 1.1rem;
+    }
+    .result-value { font-weight: bold; }
+    .gain { color: #28a745; }
+    .loss { color: #dc3545; }
+    
+    .break-even-info {
+        background-color: #e9f7ff;
+        border: 1px solid #b3e0ff;
+        border-radius: 4px;
+        padding: 1rem;
+        margin-top: 1rem;
+        font-size: 1rem;
+    }
+    .chart-container {
+      margin-top: 2rem;
+      position: relative;
+      height: 300px;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Stock Average Calculator 📈</h1>
+
+  <table id="purchaseTable">
+    <thead>
+      <tr>
+        <th>Shares Bought</th>
+        <th>Price per Share ($)</th>
+        <th>Remove</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <button class="btn btn-add" id="addRowBtn">Add Purchase</button>
+  <button class="btn btn-reset" id="resetBtn">Reset All</button>
+
+  <div class="input-grid">
+    <div class="input-group">
+      <label for="marketPrice">Current Market Price ($):</label>
+      <input type="number" min="0" step="0.01" id="marketPrice" />
+    </div>
+    <div class="input-group">
+      <label for="targetPrice">Optional Target Average ($):</label>
+      <input type="number" min="0" step="0.01" id="targetPrice" placeholder="e.g., 55.50" />
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="chart-container">
+    <canvas id="averageChart"></canvas>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const purchaseTbody = document.querySelector("#purchaseTable tbody");
+  const addRowBtn = document.getElementById("addRowBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const marketPriceInput = document.getElementById("marketPrice");
+  const targetPriceInput = document.getElementById("targetPrice");
+  const resultsDiv = document.getElementById("results");
+  
+  let chartInstance = null; // Holds the Chart.js object
+
+  // Event Listeners
+  addRowBtn.addEventListener("click", addRow);
+  resetBtn.addEventListener("click", resetCalculator);
+  
+  document.body.addEventListener("input", (event) => {
+    if (event.target.matches('.shares, .price, #marketPrice, #targetPrice')) {
+      updateCalculations();
+    }
+  });
+
+  purchaseTbody.addEventListener("click", (event) => {
+    if (event.target.matches(".btn-remove")) {
+      removeRow(event.target);
+    }
+  });
+  
+  function createRow() {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td><input type="number" min="0" class="shares" placeholder="100"></td>
+      <td><input type="number" min="0" step="0.01" class="price" placeholder="56.89"></td>
+      <td><button class="btn btn-remove">Remove</button></td>
+    `;
+    return row;
+  }
+
+  function addRow() { purchaseTbody.appendChild(createRow()); }
+
+  function removeRow(button) {
+    if (purchaseTbody.rows.length > 1) { button.closest("tr").remove(); } 
+    else {
+      purchaseTbody.rows[0].querySelector(".shares").value = "";
+      purchaseTbody.rows[0].querySelector(".price").value = "";
+    }
+    updateCalculations();
+  }
+
+  function resetCalculator() {
+    purchaseTbody.innerHTML = "";
+    addRow();
+    marketPriceInput.value = "";
+    targetPriceInput.value = "";
+    updateCalculations();
+  }
+
+  function getCalculationData() {
+    let totalShares = 0;
+    let totalCost = 0;
+    purchaseTbody.querySelectorAll("tr").forEach(row => {
+      const shares = parseFloat(row.querySelector(".shares").value) || 0;
+      const price = parseFloat(row.querySelector(".price").value) || 0;
+      totalShares += shares;
+      totalCost += shares * price;
+    });
+    
+    const marketPrice = parseFloat(marketPriceInput.value) || 0;
+    const targetPrice = parseFloat(targetPriceInput.value) || 0;
+    const currentAvg = totalShares > 0 ? totalCost / totalShares : 0;
+    const currentValue = totalShares * marketPrice;
+    const unrealizedGainLoss = currentValue - totalCost;
+
+    return { totalShares, totalCost, marketPrice, targetPrice, currentAvg, currentValue, unrealizedGainLoss };
+  }
+
+  function updateCalculations() {
+    const data = getCalculationData();
+    renderResults(data);
+    updateChart(data);
+  }
+
+  function renderResults(data) {
+    const { totalShares, totalCost, marketPrice, targetPrice, currentAvg, currentValue, unrealizedGainLoss } = data;
+    
+    if (totalShares === 0) {
+      resultsDiv.innerHTML = "Enter your purchase data to get started.";
+      return;
+    }
+    
+    const gainLossClass = unrealizedGainLoss >= 0 ? 'gain' : 'loss';
+    const sign = unrealizedGainLoss > 0 ? '+' : '';
+    let breakEvenHTML = "";
+
+    if (targetPrice > 0 && unrealizedGainLoss < 0) {
+      if (targetPrice < marketPrice || targetPrice >= currentAvg) {
+          breakEvenHTML = `
+            <div class="break-even-info" style="border-color: #f5c6cb; background-color: #f8d7da; color: #721c24;">
+              <strong>Invalid Target Price:</strong> Target must be between the Market Price ($${marketPrice.toFixed(2)}) and Current Average ($${currentAvg.toFixed(2)}).
+            </div>`;
+      } else {
+        const sharesToBuy = (totalCost - totalShares * targetPrice) / (targetPrice - marketPrice);
+        const additionalInvestment = sharesToBuy * marketPrice;
+        breakEvenHTML = `
+          <div class="break-even-info">
+            To lower your average to <strong>$${targetPrice.toFixed(2)}</strong>, buy approximately <strong>${Math.ceil(sharesToBuy)}</strong> more shares, costing <strong>$${additionalInvestment.toFixed(2)}</strong>.
+          </div>`;
+      }
+    }
+    
+    resultsDiv.innerHTML = `
+      Total Shares: <span class="result-value">${totalShares}</span><br>
+      Average Price: <span class="result-value">$${currentAvg.toFixed(2)}</span><br>
+      Total Cost Basis: <span class="result-value">$${totalCost.toFixed(2)}</span><br>
+      <hr style="border:none; border-top: 1px dashed #ccc; margin: 8px 0;">
+      Current Portfolio Value: <span class="result-value">$${currentValue.toFixed(2)}</span><br>
+      <strong>Unrealized P/L: <span class="result-value ${gainLossClass}">${sign}$${unrealizedGainLoss.toFixed(2)}</span></strong>
+      ${breakEvenHTML}
+    `;
+  }
+
+  // NEW: Chart.js Configuration & Update Logic
+  function updateChart(data) {
+    const { totalShares, totalCost, marketPrice, currentAvg } = data;
+    const ctx = document.getElementById('averageChart').getContext('2d');
+
+    // Destroy the old chart instance if data is wiped or invalid
+    if (totalShares === 0 || marketPrice <= 0 || currentAvg <= marketPrice) {
+      if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+      return;
+    }
+
+    // Generate dynamic steps for the X-axis (additional shares to buy)
+    // Scale the X axis dynamically relative to how many shares they already own
+    const maxAdditionalShares = totalShares * 2; 
+    const labels = [];
+    const chartData = [];
+
+    for (let i = 0; i <= maxAdditionalShares; i += Math.ceil(maxAdditionalShares / 20)) {
+      labels.push(i);
+      const newAverage = (totalCost + (i * marketPrice)) / (totalShares + i);
+      chartData.push(newAverage);
+    }
+
+    if (chartInstance) {
+      // Update data smoothly if chart already exists
+      chartInstance.data.labels = labels;
+      chartInstance.data.datasets[0].data = chartData;
+      chartInstance.options.scales.y.suggestedMax = currentAvg + 1;
+      chartInstance.options.scales.y.suggestedMin = marketPrice - 1;
+      chartInstance.update();
+    } else {
+      // Build a fresh chart instance
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'New Average Price ($)',
+            data: chartData,
+            borderColor: '#007bff',
+            backgroundColor: 'rgba(0, 123, 255, 0.05)',
+            borderWidth: 3,
+            tension: 0.2,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { title: { display: true, text: 'Additional Shares Purchased' } },
+            y: { 
+              title: { display: true, text: 'Average Cost ($)' },
+              suggestedMax: currentAvg + 1,
+              suggestedMin: marketPrice - 1
+            }
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (context) => `Avg Price: $${context.parsed.y.toFixed(2)}`
+              }
+            }
+          }
+        }
+      });
+    }
+  }
+
+  resetCalculator();
+});
+</script>
+
+</body>
+</html>
