@@ -434,6 +434,44 @@
       margin-top: 8px;
     }
 
+    /* ---- Auth / sync bar ---- */
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      min-height: 20px;
+    }
+    .auth-status { font-size: 12px; color: var(--ios-gray); font-weight: 500; }
+    .auth-status .auth-email { color: #000; font-weight: 600; }
+    .auth-dot { color: var(--ios-green); font-size: 15px; line-height: 1; }
+    .btn-google {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      border: 1px solid var(--ios-border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #000;
+      cursor: pointer;
+    }
+    .btn-google:active { background: #f2f2f7; }
+    .btn-google .g-mark {
+      font-family: Arial, sans-serif; font-weight: 700; font-size: 15px;
+      background: conic-gradient(from -45deg, #ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .btn-link {
+      border: none; background: none; color: var(--ios-blue);
+      font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px;
+    }
+    .auth-error { font-size: 12px; color: var(--ios-red); font-weight: 600; flex-basis: 100%; }
+
     /* ---- Portfolio dashboard ---- */
     .portfolio-summary {
       display: flex;
@@ -533,6 +571,7 @@
 
 <!-- ================= DASHBOARD VIEW ================= -->
 <div id="dashboardView">
+  <div id="authBar" class="auth-bar"></div>
   <div class="card portfolio-summary" id="portfolioSummary">
     <div class="ps-block">
       <div class="ps-label">Market Value</div>
@@ -675,6 +714,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const dashboardView = document.getElementById("dashboardView");
   const detailView = document.getElementById("detailView");
   const appTitle = document.getElementById("appTitle");
+  const authBar = document.getElementById("authBar");
   const positionList = document.getElementById("positionList");
   const pfValueEl = document.getElementById("pfValue");
   const pfPLEl = document.getElementById("pfPL");
@@ -897,6 +937,7 @@ document.addEventListener("DOMContentLoaded", () => {
     portfolio.positions = portfolio.positions.filter(p => p.id !== id);
     if (portfolio.activeId === id) portfolio.activeId = null;
     store.save(portfolio);
+    cloudRemove(id);   // remove from Firestore when signed in
     renderDashboard();
     schedulePortfolioRefresh();
   }
@@ -937,11 +978,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function goBack() {
-    saveState();
+    saveState();                 // DOM → activePos, local save + debounced cloud upsert
+    const edited = activePos;    // hold the reference before we clear it
     stopAutoRefresh();
+    showView("dashboard");
+
+    // If a remote change arrived while editing, apply it now but keep our edit.
+    if (pendingCloud) {
+      applyCloud(pendingCloud);
+      pendingCloud = null;
+      if (edited) {
+        const idx = portfolio.positions.findIndex(p => p.id === edited.id);
+        if (idx >= 0) portfolio.positions[idx] = edited; else portfolio.positions.push(edited);
+        store.save(portfolio);
+      }
+    }
+    if (edited) flushCloudUpsert(edited);   // persist the edit to Firestore immediately
+
     activePos = null;
     portfolio.activeId = null;
-    showView("dashboard");
     renderDashboard();
     schedulePortfolioRefresh();
   }
@@ -1400,6 +1455,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (companyName) activePos.name = companyName;
     activePos.updatedAt = Date.now();
     store.save(portfolio);
+    scheduleCloudUpsert(activePos);   // debounced push to Firestore when signed in
   }
 
   function updateStatCards(data) {
@@ -1925,12 +1981,208 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // ======================================================================
+  //  Firebase sync layer (sits behind the store; localStorage stays the
+  //  offline mirror). Only user-authored fields sync — live quotes don't.
+  // ======================================================================
+  let user = null;             // Firebase user, or null when signed out
+  let cloudUnsub = null;       // active onSnapshot unsubscribe
+  let cloudSeeded = false;     // first-snapshot seeding guard (per sign-in)
+  let pendingCloud = null;     // snapshot deferred while editing in detail view
+  let cloudUpsertTimer = null;
+
+  // Strip transient/live fields — Firestore holds the portfolio *definition*.
+  function positionToDoc(p) {
+    return {
+      id: p.id,
+      symbol: p.symbol || "",
+      name: p.name || "",
+      mode: p.mode === "short" ? "short" : "long",
+      target: (p.target != null) ? p.target : null,
+      lots: Array.isArray(p.lots) ? p.lots : [],
+      updatedAt: p.updatedAt || Date.now()
+    };
+  }
+
+  function docToPosition(d, quoteById) {
+    return {
+      id: d.id,
+      symbol: d.symbol || "",
+      name: d.name || "",
+      mode: d.mode === "short" ? "short" : "long",
+      target: (d.target != null) ? d.target : null,
+      lots: (Array.isArray(d.lots) && d.lots.length) ? d.lots : [{ shares: "", price: "" }],
+      quote: quoteById[d.id] || null,   // keep any live quote we already had
+      updatedAt: d.updatedAt || 0
+    };
+  }
+
+  function initCloud() {
+    const wire = () => {
+      if (!window.FB || !window.FB.ready) return;
+      renderAuthBar();
+      window.FB.onAuth((u) => {
+        user = u || null;
+        renderAuthBar();
+        if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
+        cloudSeeded = false;
+        pendingCloud = null;
+        if (user) {
+          cloudUnsub = window.FB.subscribe(user.uid, onCloudSnapshot, (err) => {
+            console.error("Firestore snapshot error:", err);
+            showAuthError("Sync error: " + (err && err.code ? err.code : "unknown"));
+          });
+        }
+      });
+    };
+    if (window.FB && window.FB.ready) wire();
+    else window.addEventListener("fb-ready", wire, { once: true });
+  }
+
+  function onCloudSnapshot(cloudDocs) {
+    // First snapshot after sign-in: if the cloud is empty but we have local
+    // positions, push them up (one-time migration of this device's data).
+    if (!cloudSeeded) {
+      cloudSeeded = true;
+      if (cloudDocs.length === 0 && portfolio.positions.length > 0) {
+        portfolio.positions.forEach(p => window.FB.upsert(user.uid, positionToDoc(p)));
+        return;   // the writes echo back as the next snapshot
+      }
+    }
+    // Don't clobber inputs mid-edit — apply once we're back on the dashboard.
+    if (currentView === "detail") { pendingCloud = cloudDocs; return; }
+    applyCloud(cloudDocs);
+  }
+
+  function applyCloud(cloudDocs) {
+    const quoteById = {};
+    portfolio.positions.forEach(p => { if (p.quote) quoteById[p.id] = p.quote; });
+    portfolio.positions = cloudDocs.map(d => docToPosition(d, quoteById));
+    store.save(portfolio);
+    if (currentView === "dashboard") {
+      renderDashboard();
+      schedulePortfolioRefresh();
+    }
+  }
+
+  // Cloud write helpers (no-ops when signed out).
+  function cloudUpsert(pos) {
+    if (user && window.FB) window.FB.upsert(user.uid, positionToDoc(pos)).catch(e => console.error("upsert", e));
+  }
+  function cloudRemove(id) {
+    if (user && window.FB) window.FB.remove(user.uid, id).catch(e => console.error("remove", e));
+  }
+  function scheduleCloudUpsert(pos) {
+    if (!user || !window.FB) return;
+    if (cloudUpsertTimer) clearTimeout(cloudUpsertTimer);
+    const snap = positionToDoc(pos);
+    cloudUpsertTimer = setTimeout(() => window.FB.upsert(user.uid, snap).catch(e => console.error("upsert", e)), 800);
+  }
+  function flushCloudUpsert(pos) {
+    if (cloudUpsertTimer) { clearTimeout(cloudUpsertTimer); cloudUpsertTimer = null; }
+    cloudUpsert(pos);
+  }
+
+  // ---- Auth bar UI ----
+  function renderAuthBar() {
+    if (!window.FB || !window.FB.ready) { authBar.innerHTML = ""; return; }
+    if (user) {
+      authBar.innerHTML =
+        `<span class="auth-status"><span class="auth-dot">●</span> Synced as <span class="auth-email">${user.email || "account"}</span></span>
+         <button class="btn-link" id="signOutBtn">Sign out</button>`;
+      document.getElementById("signOutBtn").addEventListener("click", () => window.FB.signOut());
+    } else {
+      authBar.innerHTML =
+        `<span class="auth-status">Sign in to sync across devices</span>
+         <button class="btn-google" id="signInBtn"><span class="g-mark">G</span> Sign in with Google</button>`;
+      document.getElementById("signInBtn").addEventListener("click", doSignIn);
+    }
+  }
+
+  async function doSignIn() {
+    try {
+      showAuthError("");
+      await window.FB.signIn();
+    } catch (e) {
+      const code = e && e.code ? e.code : "";
+      if (code === "auth/unauthorized-domain") {
+        showAuthError("This domain isn't authorized in Firebase. Add it under Auth → Settings → Authorized domains.");
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        /* user closed the popup — ignore */
+      } else {
+        showAuthError("Sign-in failed: " + (code || e.message || "unknown"));
+      }
+    }
+  }
+
+  function showAuthError(msg) {
+    let el = document.getElementById("authError");
+    if (!msg) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "authError";
+      el.className = "auth-error";
+      authBar.appendChild(el);
+    }
+    el.textContent = msg;
+  }
+
   // ---- Bootstrap ----
   portfolio = store.load();          // loads (and migrates legacy single-position state)
   renderDashboard();                 // instant render from cached quotes
   showView("dashboard");
   refreshPortfolio();                // pull fresh quotes now, then it self-schedules
+  initCloud();                       // wire Google sign-in + Firestore sync if available
 });
+</script>
+
+<!-- Firebase sync bridge. Loaded as an ES module (runs before DOMContentLoaded),
+     exposes window.FB for the main app. If this fails to load (offline, blocked),
+     the app simply runs local-only on localStorage. -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import {
+    getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCdBglAA3AKAT8TQRVv8SJvJZ4XImIAGmI",
+    authDomain: "stock-tracker-1dff7.firebaseapp.com",
+    projectId: "stock-tracker-1dff7",
+    storageBucket: "stock-tracker-1dff7.firebasestorage.app",
+    messagingSenderId: "120950923034",
+    appId: "1:120950923034:web:07d0c2df9227f3412a16a3"
+  };
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    window.FB = {
+      ready: true,
+      signIn: () => signInWithPopup(auth, provider),
+      signOut: () => signOut(auth),
+      onAuth: (cb) => onAuthStateChanged(auth, cb),
+      upsert: (uid, position) =>
+        setDoc(doc(db, "users", uid, "positions", position.id), position),
+      remove: (uid, id) =>
+        deleteDoc(doc(db, "users", uid, "positions", id)),
+      subscribe: (uid, onData, onErr) =>
+        onSnapshot(collection(db, "users", uid, "positions"), (snap) => {
+          const arr = [];
+          snap.forEach(d => arr.push(d.data()));
+          onData(arr);
+        }, onErr)
+    };
+    window.dispatchEvent(new Event("fb-ready"));
+  } catch (e) {
+    console.error("Firebase init failed — running local-only:", e);
+  }
 </script>
 
 </body>
