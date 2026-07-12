@@ -651,6 +651,14 @@
       flex: 1; font-size: 12px; color: var(--ios-gray);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    .pc-dots { display: inline-flex; align-items: center; gap: 3px; flex: none; margin-right: 2px; }
+    .pc-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--ios-border);   /* blank = no data yet */
+    }
+    .pc-dot.up { background: var(--ios-green); }
+    .pc-dot.down { background: var(--ios-red); }
+
     .pc-delete {
       border: none; background: none; color: var(--ios-gray);
       font-size: 16px; line-height: 1; padding: 4px; cursor: pointer; flex: none;
@@ -960,6 +968,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const fmtMoney = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  // Last `n` price-move directions for a symbol ('up' | 'down' | null), newest
+  // last. Drives the dot strip — a glance at recent movement without the chart.
+  function getRecentMoves(pos, n) {
+    let arr = [];
+    try {
+      const raw = localStorage.getItem(historyStorageKey(pos.symbol));
+      if (raw) arr = JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+
+    const dirs = [];
+    for (let i = 1; i < arr.length; i++) dirs.push(arr[i].p > arr[i - 1].p ? "up" : "down");
+    let last = dirs.slice(-n);
+
+    // Fallback so a fresh quote still hints direction: use the day change sign.
+    if (last.length === 0 && pos.quote && typeof pos.quote.dp === "number" && pos.quote.dp !== 0) {
+      last = [pos.quote.dp > 0 ? "up" : "down"];
+    }
+    while (last.length < n) last.unshift(null);   // pad left with blanks
+    return last;
+  }
+
   // Pure P/L math for a stored position using its cached quote.
   function computePosition(pos) {
     let totalShares = 0, totalCost = 0;
@@ -1054,11 +1083,15 @@ document.addEventListener("DOMContentLoaded", () => {
       ? `<div class="pc-holdings">${m.totalShares} sh · avg $${fmtMoney(m.currentAvg)} · value $${fmtMoney(m.currentValue)}</div>`
       : `<div class="pc-holdings">No lots entered</div>`;
 
+    const dotsHTML = getRecentMoves(pos, 5)
+      .map(d => `<span class="pc-dot ${d || ""}"></span>`).join("");
+
     card.innerHTML = `
       <div class="pc-top">
         <span class="pc-symbol">${pos.symbol || "—"}</span>
         <span class="pc-tag ${tagCls}">${pos.mode}</span>
         ${nameHTML}
+        <span class="pc-dots" title="Last 5 price moves (green up, red down)">${dotsHTML}</span>
         <button class="pc-delete" title="Delete">✕</button>
       </div>
       <div class="pc-body">
