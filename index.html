@@ -434,6 +434,79 @@
       margin-top: 8px;
     }
 
+    /* ---- Portfolio dashboard ---- */
+    .portfolio-summary {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .portfolio-summary .ps-block { flex: 1; }
+    .ps-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ios-gray);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 4px;
+    }
+    .ps-value { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
+    .ps-sub { font-size: 13px; font-weight: 600; margin-top: 2px; }
+
+    .portfolio-pie {
+      width: 16px; height: 16px; border-radius: 50%; flex: none; display: none;
+    }
+
+    .back-btn {
+      border: none;
+      background: none;
+      color: var(--ios-blue);
+      font-size: 17px;
+      font-weight: 600;
+      padding: 4px 0;
+      margin-bottom: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .position-card {
+      background: var(--ios-card);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      cursor: pointer;
+      transition: transform 0.08s ease;
+    }
+    .position-card:active { transform: scale(0.99); }
+
+    .pc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .pc-symbol { font-size: 16px; font-weight: 700; letter-spacing: 0.2px; }
+    .pc-tag {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.4px;
+      padding: 2px 6px; border-radius: 5px; text-transform: uppercase;
+    }
+    .pc-tag.long { color: var(--ios-blue); background: rgba(0,122,245,0.1); }
+    .pc-tag.short { color: #ff9500; background: rgba(255,149,0,0.12); }
+    .pc-name {
+      flex: 1; font-size: 12px; color: var(--ios-gray);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pc-delete {
+      border: none; background: none; color: var(--ios-gray);
+      font-size: 16px; line-height: 1; padding: 4px; cursor: pointer; flex: none;
+    }
+    .pc-delete:active { color: var(--ios-red); }
+
+    .pc-body { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+    .pc-price { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+    .pc-day { font-size: 12px; font-weight: 600; margin-left: 6px; }
+    .pc-pl { text-align: right; }
+    .pc-pl-value { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+    .pc-pl-sub { font-size: 12px; font-weight: 600; }
+    .pc-holdings { font-size: 12px; color: var(--ios-gray); margin-top: 4px; }
+    .pc-muted { color: var(--ios-gray); font-weight: 600; }
+
     .stat-cards {
       display: flex;
       gap: 12px;
@@ -455,8 +528,36 @@
 <body>
 
 <div class="app-header">
-  <h1>Position Calculator 📈</h1>
+  <h1 id="appTitle">My Portfolio 📈</h1>
 </div>
+
+<!-- ================= DASHBOARD VIEW ================= -->
+<div id="dashboardView">
+  <div class="card portfolio-summary" id="portfolioSummary">
+    <div class="ps-block">
+      <div class="ps-label">Market Value</div>
+      <div class="ps-value" id="pfValue">$0.00</div>
+    </div>
+    <div class="ps-block">
+      <div class="ps-label">Total P/L</div>
+      <div class="ps-value" id="pfPL">$0.00</div>
+      <div class="ps-sub" id="pfROI">0.00%</div>
+    </div>
+    <div class="portfolio-pie" id="portfolioPie" title="Time until next auto-refresh"></div>
+  </div>
+
+  <div id="positionList"></div>
+
+  <div class="btn-group">
+    <button class="btn btn-add" id="addPositionBtn">+ Add Position</button>
+  </div>
+  <div id="pfStatus" style="font-size: 12px; color: var(--ios-gray); text-align:center; min-height:16px;"></div>
+</div>
+
+<!-- ================= DETAIL VIEW ================= -->
+<div id="detailView" style="display:none;">
+
+<button class="back-btn" id="backBtn">‹ Portfolio</button>
 
 <div class="segmented-control">
   <button id="modeLong" class="active" onclick="setMode('long')">Long (Buy)</button>
@@ -469,8 +570,8 @@
 </div>
 
 <div class="btn-group">
-  <button class="btn btn-add" id="addRowBtn">+ Add Position</button>
-  <button class="btn btn-reset" id="resetBtn">Reset</button>
+  <button class="btn btn-add" id="addRowBtn">+ Add Lot</button>
+  <button class="btn btn-reset" id="resetBtn">Clear</button>
 </div>
 
 <div class="card">
@@ -545,6 +646,8 @@
   <div id="chartEmpty" class="chart-empty" style="display:none;"></div>
 </div>
 
+</div><!-- /detailView -->
+
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const purchaseList = document.getElementById("purchaseList");
@@ -568,12 +671,356 @@ document.addEventListener("DOMContentLoaded", () => {
   const hoverReadout = document.getElementById("hoverReadout");
   const pulseDot = document.getElementById("pulseDot");
 
+  // Dashboard elements
+  const dashboardView = document.getElementById("dashboardView");
+  const detailView = document.getElementById("detailView");
+  const appTitle = document.getElementById("appTitle");
+  const positionList = document.getElementById("positionList");
+  const pfValueEl = document.getElementById("pfValue");
+  const pfPLEl = document.getElementById("pfPL");
+  const pfROIEl = document.getElementById("pfROI");
+  const portfolioPie = document.getElementById("portfolioPie");
+  const pfStatus = document.getElementById("pfStatus");
+  const addPositionBtn = document.getElementById("addPositionBtn");
+  const backBtn = document.getElementById("backBtn");
+
   const FINNHUB_API_KEY = "d922d4hr01qrfbe82hegd922d4hr01qrfbe82hf0";
   const REFRESH_MS = 30000;
 
   let chartInstance = null;
   let currentMode = 'long';
   let chartView = 'history';   // 'analysis' | 'history'
+
+  // ---- Portfolio state ----
+  let portfolio = { version: 2, activeId: null, positions: [] };
+  let activePos = null;        // the position currently open in the detail view
+  let currentView = 'dashboard';
+
+  const quoteUrl = (sym) =>
+    `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${FINNHUB_API_KEY}`;
+  const marketStatusUrl = () =>
+    `https://finnhub.io/api/v1/stock/market-status?exchange=US&token=${FINNHUB_API_KEY}`;
+
+  // ---- Persistence store (the ONLY code that touches storage; swap for
+  //      Firestore in the sync phase without changing the rest of the app) ----
+  const store = (function () {
+    const KEY = "portfolioV2";
+    const OLD_KEY = "positionCalculatorState";
+
+    function migrateLegacy() {
+      try {
+        const raw = localStorage.getItem(OLD_KEY);
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        const lots = (Array.isArray(s.rows) && s.rows.length)
+          ? s.rows.map(r => ({ shares: r.shares || "", price: r.price || "" }))
+          : [{ shares: "", price: "" }];
+        const hasContent = (s.symbol && s.symbol.trim()) || lots.some(l => l.shares || l.price);
+        if (!hasContent) return { version: 2, activeId: null, positions: [] };
+        const mp = parseFloat(s.marketPrice);
+        const pos = {
+          id: newId(),
+          symbol: (s.symbol || "").trim().toUpperCase(),
+          name: "",
+          mode: s.mode === "short" ? "short" : "long",
+          target: isFinite(parseFloat(s.targetPrice)) ? parseFloat(s.targetPrice) : null,
+          lots,
+          quote: isFinite(mp) && mp > 0 ? { c: mp, d: 0, dp: 0 } : null,
+          updatedAt: Date.now()
+        };
+        return { version: 2, activeId: null, positions: [pos] };
+      } catch (e) { return null; }
+    }
+
+    return {
+      load() {
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && Array.isArray(p.positions)) return p;
+          }
+        } catch (e) { /* fall through to migration */ }
+        const migrated = migrateLegacy();
+        if (migrated) {
+          try {
+            localStorage.setItem(KEY, JSON.stringify(migrated));
+            localStorage.removeItem(OLD_KEY);
+          } catch (e) { /* ignore */ }
+          return migrated;
+        }
+        return { version: 2, activeId: null, positions: [] };
+      },
+      save(p) {
+        try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) { /* ignore */ }
+      },
+      subscribe(/* cb */) { return () => {}; }  // no-op today; Firestore onSnapshot later
+    };
+  })();
+
+  function newId() {
+    return "p_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+  }
+
+  const fmtMoney = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Pure P/L math for a stored position using its cached quote.
+  function computePosition(pos) {
+    let totalShares = 0, totalCost = 0;
+    (pos.lots || []).forEach(l => {
+      const s = parseFloat(l.shares) || 0;
+      const p = parseFloat(l.price) || 0;
+      totalShares += s;
+      totalCost += s * p;
+    });
+    const price = pos.quote ? (pos.quote.c || 0) : 0;
+    const hasPrice = price > 0;
+    const currentAvg = totalShares > 0 ? totalCost / totalShares : 0;
+    const currentValue = totalShares * price;
+    let pl = 0;
+    if (totalShares > 0 && price > 0) {
+      pl = pos.mode === "long" ? currentValue - totalCost : totalCost - currentValue;
+    }
+    const roi = totalCost > 0 ? (pl / totalCost) * 100 : 0;
+    return { totalShares, totalCost, price, hasPrice, currentAvg, currentValue, pl, roi };
+  }
+
+  // ---- View switching ----
+  function showView(view) {
+    currentView = view;
+    dashboardView.style.display = view === "dashboard" ? "block" : "none";
+    detailView.style.display = view === "detail" ? "block" : "none";
+    appTitle.textContent = view === "dashboard" ? "My Portfolio 📈" : "Position 📈";
+    window.scrollTo(0, 0);
+  }
+
+  // ---- Dashboard rendering ----
+  function renderDashboard() {
+    positionList.innerHTML = "";
+
+    if (!portfolio.positions.length) {
+      positionList.innerHTML =
+        `<div class="card summary-empty">No positions yet. Tap "+ Add Position" to start tracking one.</div>`;
+    }
+
+    let totalValue = 0, totalCost = 0, totalPL = 0;
+    portfolio.positions.forEach(pos => {
+      const m = computePosition(pos);
+      if (m.hasPrice) { totalValue += m.currentValue; totalCost += m.totalCost; totalPL += m.pl; }
+      positionList.appendChild(buildCard(pos, m));
+    });
+
+    const totalRoi = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
+    const plCls = totalPL >= 0 ? "gain" : "loss";
+    const sign = totalPL > 0 ? "+" : (totalPL < 0 ? "-" : "");
+
+    pfValueEl.textContent = `$${fmtMoney(totalValue)}`;
+    pfPLEl.textContent = `${sign}$${fmtMoney(Math.abs(totalPL))}`;
+    pfPLEl.className = `ps-value ${plCls}`;
+    pfROIEl.textContent = `${sign}${Math.abs(totalRoi).toFixed(2)}%`;
+    pfROIEl.className = `ps-sub ${plCls}`;
+  }
+
+  function buildCard(pos, m) {
+    const card = document.createElement("div");
+    card.className = "position-card";
+    card.dataset.id = pos.id;
+
+    const tagCls = pos.mode === "short" ? "short" : "long";
+    const nameHTML = pos.name
+      ? `<span class="pc-name">${pos.name}</span>`
+      : `<span class="pc-name"></span>`;
+
+    let priceHTML, plHTML;
+    if (m.hasPrice) {
+      const dp = pos.quote.dp ?? 0;
+      const dayCls = dp >= 0 ? "gain" : "loss";
+      const daySign = dp > 0 ? "+" : "";
+      priceHTML = `<div class="pc-price">$${fmtMoney(m.price)}<span class="pc-day ${dayCls}">${daySign}${dp.toFixed(2)}%</span></div>`;
+
+      if (m.totalShares > 0) {
+        const plCls = m.pl >= 0 ? "gain" : "loss";
+        const s = m.pl > 0 ? "+" : (m.pl < 0 ? "-" : "");
+        plHTML =
+          `<div class="pc-pl">
+             <div class="pc-pl-value ${plCls}">${s}$${fmtMoney(Math.abs(m.pl))}</div>
+             <div class="pc-pl-sub ${plCls}">${s}${Math.abs(m.roi).toFixed(2)}%</div>
+           </div>`;
+      } else {
+        plHTML = `<div class="pc-pl"><div class="pc-pl-sub pc-muted">No shares yet</div></div>`;
+      }
+    } else {
+      priceHTML = `<div class="pc-price pc-muted" style="font-size:15px;">Fetching…</div>`;
+      plHTML = "";
+    }
+
+    const holdings = m.totalShares > 0
+      ? `<div class="pc-holdings">${m.totalShares} sh · avg $${fmtMoney(m.currentAvg)} · value $${fmtMoney(m.currentValue)}</div>`
+      : `<div class="pc-holdings">No lots entered</div>`;
+
+    card.innerHTML = `
+      <div class="pc-top">
+        <span class="pc-symbol">${pos.symbol || "—"}</span>
+        <span class="pc-tag ${tagCls}">${pos.mode}</span>
+        ${nameHTML}
+        <button class="pc-delete" title="Delete">✕</button>
+      </div>
+      <div class="pc-body">
+        <div>${priceHTML}${holdings}</div>
+        ${plHTML}
+      </div>`;
+
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".pc-delete")) {
+        e.stopPropagation();
+        if (confirm(`Delete ${pos.symbol || "this position"}?`)) deletePosition(pos.id);
+        return;
+      }
+      openDetail(pos.id);
+    });
+
+    return card;
+  }
+
+  // ---- Position lifecycle ----
+  function addPosition() {
+    const pos = {
+      id: newId(), symbol: "", name: "", mode: "long",
+      target: null, lots: [{ shares: "", price: "" }], quote: null, updatedAt: Date.now()
+    };
+    portfolio.positions.push(pos);
+    store.save(portfolio);
+    openDetail(pos.id);
+  }
+
+  function deletePosition(id) {
+    portfolio.positions = portfolio.positions.filter(p => p.id !== id);
+    if (portfolio.activeId === id) portfolio.activeId = null;
+    store.save(portfolio);
+    renderDashboard();
+    schedulePortfolioRefresh();
+  }
+
+  function openDetail(id) {
+    const pos = portfolio.positions.find(p => p.id === id);
+    if (!pos) return;
+    stopPortfolioRefresh();
+
+    portfolio.activeId = id;
+    activePos = pos;
+
+    // Reset detail-scoped trackers, then load this position into the inputs.
+    currentMode = pos.mode || "long";
+    applyModeUI(currentMode);
+    symbolInput.value = pos.symbol || "";
+    targetPriceInput.value = (pos.target != null) ? pos.target : "";
+    marketPriceInput.value = pos.quote && pos.quote.c ? pos.quote.c.toFixed(2) : "";
+
+    purchaseList.innerHTML = "";
+    const lots = (pos.lots && pos.lots.length) ? pos.lots : [{ shares: "", price: "" }];
+    lots.forEach(l => purchaseList.appendChild(createRow(l.shares || "", l.price || "")));
+
+    profiledSymbol = "";
+    companyName = pos.name || "";
+    lastFetchPL = null;
+    plDelta = null;
+    lastFetchedPrice = null;
+    setStatus("", "var(--ios-gray)");
+    quoteCard.style.display = "none";
+    marketClosedNote.style.display = "none";
+    loadPriceHistory(pos.symbol || "");
+    setChartViewSilent("history");
+
+    showView("detail");
+    updateCalculations();
+    if (symbolInput.value.trim()) fetchQuote();   // refresh + start the detail loop
+  }
+
+  function goBack() {
+    saveState();
+    stopAutoRefresh();
+    activePos = null;
+    portfolio.activeId = null;
+    showView("dashboard");
+    renderDashboard();
+    schedulePortfolioRefresh();
+  }
+
+  addPositionBtn.addEventListener("click", addPosition);
+  backBtn.addEventListener("click", goBack);
+
+  // ---- Portfolio-wide auto-refresh (one cycle for all tracked symbols) ----
+  let pfTimeoutId = null, pfRafId = null, pfNextAt = 0;
+
+  function stopPortfolioRefresh() {
+    if (pfTimeoutId) { clearTimeout(pfTimeoutId); pfTimeoutId = null; }
+    if (pfRafId) { cancelAnimationFrame(pfRafId); pfRafId = null; }
+    portfolioPie.style.display = "none";
+  }
+
+  function schedulePortfolioRefresh() {
+    if (!portfolio.positions.some(p => p.symbol)) { stopPortfolioRefresh(); return; }
+    if (pfTimeoutId) clearTimeout(pfTimeoutId);
+    pfNextAt = Date.now() + REFRESH_MS;
+    pfTimeoutId = setTimeout(refreshPortfolio, REFRESH_MS);
+    animatePortfolioPie();
+  }
+
+  function animatePortfolioPie() {
+    if (pfRafId) cancelAnimationFrame(pfRafId);
+    portfolioPie.style.display = "block";
+    const tick = () => {
+      const remaining = Math.max(0, pfNextAt - Date.now());
+      const deg = (remaining / REFRESH_MS) * 360;
+      portfolioPie.style.background =
+        `conic-gradient(var(--ios-blue) ${deg}deg, var(--ios-border) ${deg}deg)`;
+      if (remaining > 0) pfRafId = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  async function refreshPortfolio() {
+    if (currentView !== "dashboard") return;   // detail view runs its own loop
+    const symbols = [...new Set(portfolio.positions.map(p => p.symbol).filter(Boolean))];
+    if (!symbols.length) { stopPortfolioRefresh(); return; }
+
+    if (symbols.length > 25) {
+      pfStatus.textContent = `Tracking ${symbols.length} symbols — near the free API rate limit.`;
+    }
+
+    // One market-status check for the whole portfolio.
+    let isOpen = true;
+    try {
+      const sr = await fetch(marketStatusUrl());
+      if (sr.ok) { const ms = await sr.json(); if (typeof ms.isOpen === "boolean") isOpen = ms.isOpen; }
+    } catch (e) { /* ignore */ }
+
+    // One quote per unique symbol.
+    await Promise.all(symbols.map(async (sym) => {
+      try {
+        const r = await fetch(quoteUrl(sym));
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d && d.c) {
+          portfolio.positions.forEach(p => {
+            if (p.symbol === sym) p.quote = { c: d.c, d: d.d, dp: d.dp };
+          });
+          recordPriceFor(sym, d.c);
+        }
+      } catch (e) { /* skip this symbol this cycle */ }
+    }));
+
+    store.save(portfolio);
+    if (currentView === "dashboard") renderDashboard();
+
+    if (isOpen) {
+      pfStatus.textContent = "";
+      schedulePortfolioRefresh();
+    } else {
+      pfStatus.textContent = "Market closed — prices reflect the last close. Auto-refresh paused.";
+      stopPortfolioRefresh();
+    }
+  }
 
   // Intraday price points recorded from fetches, keyed per symbol/day.
   let priceHistory = [];        // [{ t: epochMs, p: price }]
@@ -667,15 +1114,30 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function recordPrice(symbol, price) {
-    // Only log genuine changes so the series traces price movement, not polling.
-    const last = priceHistory[priceHistory.length - 1];
-    if (last && last.p === price) return;
-    priceHistory.push({ t: Date.now(), p: price });
+  // Append a price point to a symbol's per-day series in storage. Keeps the
+  // in-memory `priceHistory` in sync when it's the symbol currently open.
+  function recordPriceFor(symbol, price) {
+    if (!symbol) return;
     try {
-      localStorage.setItem(historyStorageKey(symbol), JSON.stringify(priceHistory));
-    } catch (e) { /* storage unavailable — keep the in-memory copy */ }
+      const key = historyStorageKey(symbol);
+      let arr = [];
+      const raw = localStorage.getItem(key);
+      if (raw) arr = JSON.parse(raw);
+      const last = arr[arr.length - 1];
+      if (last && last.p === price) return;   // only log genuine changes
+      arr.push({ t: Date.now(), p: price });
+      localStorage.setItem(key, JSON.stringify(arr));
+      if (historySymbol === symbol) priceHistory = arr;
+    } catch (e) {
+      // Storage unavailable — keep the in-memory copy in sync at least.
+      if (historySymbol === symbol) {
+        const last = priceHistory[priceHistory.length - 1];
+        if (!last || last.p !== price) priceHistory.push({ t: Date.now(), p: price });
+      }
+    }
   }
+
+  function recordPrice(symbol, price) { recordPriceFor(symbol, price); }
 
   window.setChartView = function(view) {
     if (chartView === view) return;
@@ -684,6 +1146,13 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("viewHistory").classList.toggle("active", view === 'history');
     updateChart(getCalculationData());
   };
+
+  // Set the chart view without triggering a redraw (used when opening a position).
+  function setChartViewSilent(view) {
+    chartView = view;
+    document.getElementById("viewAnalysis").classList.toggle("active", view === 'analysis');
+    document.getElementById("viewHistory").classList.toggle("active", view === 'history');
+  }
 
   async function fetchQuote(opts = {}) {
     const auto = opts.auto === true;
@@ -786,6 +1255,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       renderQuote(data, symbol, companyName);
 
+      // Cache the quote on the active position so the dashboard card is current.
+      if (activePos) {
+        activePos.quote = { c: data.c, d: data.d, dp: data.dp };
+        if (companyName) activePos.name = companyName;
+        store.save(portfolio);
+      }
+
       // Only keep auto-refreshing while the market is open — this API has no
       // after-hours data, so polling a closed market just re-fetches the same close.
       if (isOpen) {
@@ -804,16 +1280,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function applyModeUI(mode) {
+    document.getElementById("modeLong").classList.toggle("active", mode === 'long');
+    document.getElementById("modeShort").classList.toggle("active", mode === 'short');
+    document.getElementById("historyTitle").innerText = mode === 'long' ? "Purchase History" : "Short Entry History";
+  }
+
   window.setMode = function(mode) {
     if (currentMode === mode) return;
     currentMode = mode;
-    
-    document.getElementById("modeLong").classList.toggle("active", mode === 'long');
-    document.getElementById("modeShort").classList.toggle("active", mode === 'short');
-    
-    document.getElementById("historyTitle").innerText = mode === 'long' ? "Purchase History" : "Short Entry History";
-    document.getElementById("targetLabel").innerText = mode === 'long' ? "Target Avg ($)" : "Target Avg ($)";
-    
+    applyModeUI(mode);
     updateCalculations();
   };
 
@@ -861,28 +1337,14 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCalculations();
   }
 
+  // "Clear" empties this position's lots and target (keeps the symbol, its
+  // fetched price and intraday history) so you can re-enter holdings quickly.
   function resetCalculator() {
     purchaseList.innerHTML = "";
     addRow();
-    marketPriceInput.value = "";
     targetPriceInput.value = "";
-    symbolInput.value = "";
-    setStatus("", "var(--ios-gray)");
-    quoteCard.style.display = "none";
-    stopAutoRefresh();
-    marketClosedNote.style.display = "none";
-    profiledSymbol = "";
-    companyName = "";
     lastFetchPL = null;
     plDelta = null;
-    lastFetchedPrice = null;
-    if (historySymbol) {
-      try { localStorage.removeItem(historyStorageKey(historySymbol)); } catch (err) { /* ignore */ }
-    }
-    priceHistory = [];
-    historySymbol = "";
-    setChartView('history');
-    try { localStorage.removeItem(STORAGE_KEY); } catch (err) { /* ignore */ }
     updateCalculations();
   }
 
@@ -919,51 +1381,25 @@ document.addEventListener("DOMContentLoaded", () => {
     saveState();
   }
 
-  const STORAGE_KEY = "positionCalculatorState";
-
+  // Persist the detail view's inputs into the active position, then save the
+  // whole portfolio through the store. (marketPrice is not stored — it comes
+  // from the cached quote, refreshed live.)
   function saveState() {
-    try {
-      const rows = [];
-      purchaseList.querySelectorAll(".purchase-row").forEach(row => {
-        rows.push({
-          shares: row.querySelector(".shares").value,
-          price: row.querySelector(".price").value
-        });
+    if (!activePos) return;
+    activePos.symbol = symbolInput.value.trim().toUpperCase();
+    activePos.mode = currentMode;
+    const t = parseFloat(targetPriceInput.value);
+    activePos.target = isFinite(t) ? t : null;
+    activePos.lots = [];
+    purchaseList.querySelectorAll(".purchase-row").forEach(row => {
+      activePos.lots.push({
+        shares: row.querySelector(".shares").value,
+        price: row.querySelector(".price").value
       });
-      const state = {
-        mode: currentMode,
-        symbol: symbolInput.value,
-        marketPrice: marketPriceInput.value,
-        targetPrice: targetPriceInput.value,
-        rows
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      /* localStorage unavailable (e.g. private mode) — silently skip persistence */
-    }
-  }
-
-  function loadState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const state = JSON.parse(raw);
-
-      if (state.mode === "short") setMode("short");
-
-      symbolInput.value = state.symbol || "";
-      marketPriceInput.value = state.marketPrice || "";
-      targetPriceInput.value = state.targetPrice || "";
-
-      purchaseList.innerHTML = "";
-      const rows = Array.isArray(state.rows) && state.rows.length ? state.rows : [{ shares: "", price: "" }];
-      rows.forEach(r => purchaseList.appendChild(createRow(r.shares || "", r.price || "")));
-
-      updateCalculations();
-      return true;
-    } catch (err) {
-      return false;
-    }
+    });
+    if (companyName) activePos.name = companyName;
+    activePos.updatedAt = Date.now();
+    store.save(portfolio);
   }
 
   function updateStatCards(data) {
@@ -1489,13 +1925,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Restore the last session from the browser; fall back to a clean slate.
-  if (!loadState()) {
-    resetCalculator();
-  } else if (symbolInput.value.trim()) {
-    // Resume live updates for the previously tracked symbol.
-    fetchQuote();
-  }
+  // ---- Bootstrap ----
+  portfolio = store.load();          // loads (and migrates legacy single-position state)
+  renderDashboard();                 // instant render from cached quotes
+  showView("dashboard");
+  refreshPortfolio();                // pull fresh quotes now, then it self-schedules
 });
 </script>
 
