@@ -472,6 +472,39 @@
     }
     .auth-error { font-size: 12px; color: var(--ios-red); font-weight: 600; flex-basis: 100%; }
 
+    /* ---- Login gate ---- */
+    .login-view {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--ios-bg);
+    }
+    .login-card {
+      background: var(--ios-card);
+      border-radius: 18px;
+      padding: 40px 28px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+      text-align: center;
+      max-width: 360px;
+      width: 100%;
+    }
+    .login-logo { font-size: 46px; line-height: 1; margin-bottom: 10px; }
+    .login-title { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+    .login-sub { font-size: 14px; color: var(--ios-gray); line-height: 1.5; margin-bottom: 26px; }
+    .login-spinner {
+      width: 28px; height: 28px; margin: 10px auto;
+      border-radius: 50%;
+      border: 3px solid var(--ios-border);
+      border-top-color: var(--ios-blue);
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn-google-lg { width: 100%; justify-content: center; padding: 12px 16px; font-size: 15px; }
+
     /* ---- Portfolio dashboard ---- */
     .portfolio-summary {
       display: flex;
@@ -567,6 +600,20 @@
 
 <div class="app-header">
   <h1 id="appTitle">My Portfolio 📈</h1>
+</div>
+
+<!-- ================= LOGIN GATE ================= -->
+<div id="loginView" class="login-view">
+  <div class="login-card">
+    <div class="login-logo">📈</div>
+    <div class="login-title">My Portfolio</div>
+    <div class="login-sub">Track your positions and P/L, synced across all your devices.</div>
+    <div id="loginSpinner" class="login-spinner"></div>
+    <div id="loginPrompt" class="login-prompt" style="display:none;">
+      <button class="btn-google btn-google-lg" id="loginGoogleBtn"><span class="g-mark">G</span> Sign in with Google</button>
+      <div id="loginError" class="auth-error" style="text-align:center; margin-top:12px;"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ================= DASHBOARD VIEW ================= -->
@@ -2017,26 +2064,85 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  function initCloud() {
+  // ---- Auth gate: nothing in the app is reachable until signed in ----
+  const loginView = document.getElementById("loginView");
+  const loginSpinner = document.getElementById("loginSpinner");
+  const loginPrompt = document.getElementById("loginPrompt");
+  const appHeaderEl = document.querySelector(".app-header");
+  let appStarted = false;
+
+  function showGateLoading() {
+    loginView.style.display = "flex";
+    loginSpinner.style.display = "block";
+    loginPrompt.style.display = "none";
+    appHeaderEl.style.display = "none";
+  }
+  function showLogin() {
+    loginView.style.display = "flex";
+    loginSpinner.style.display = "none";
+    loginPrompt.style.display = "block";
+    appHeaderEl.style.display = "none";
+  }
+  function setLoginError(msg) {
+    const el = document.getElementById("loginError");
+    if (el) el.textContent = msg || "";
+  }
+
+  function enterApp() {
+    loginView.style.display = "none";
+    appHeaderEl.style.display = "";
+    if (!appStarted) {
+      appStarted = true;
+      portfolio = store.load();     // instant paint from local cache
+      renderDashboard();
+      showView("dashboard");
+      refreshPortfolio();           // then cloud snapshot hydrates/overwrites
+    }
+  }
+
+  function teardownApp() {
+    stopPortfolioRefresh();
+    stopAutoRefresh();
+    appStarted = false;
+    activePos = null;
+    portfolio = { version: 2, activeId: null, positions: [] };
+    positionList.innerHTML = "";   // don't leave a signed-out user's data on screen
+  }
+
+  function initGate() {
+    showGateLoading();
     const wire = () => {
       if (!window.FB || !window.FB.ready) return;
-      renderAuthBar();
       window.FB.onAuth((u) => {
         user = u || null;
-        renderAuthBar();
         if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
         cloudSeeded = false;
         pendingCloud = null;
         if (user) {
+          renderAuthBar();
+          enterApp();
           cloudUnsub = window.FB.subscribe(user.uid, onCloudSnapshot, (err) => {
             console.error("Firestore snapshot error:", err);
-            showAuthError("Sync error: " + (err && err.code ? err.code : "unknown"));
+            if (pfStatus) pfStatus.textContent = "Sync error: " + (err && err.code ? err.code : "unknown");
           });
+        } else {
+          teardownApp();
+          showLogin();
         }
       });
     };
     if (window.FB && window.FB.ready) wire();
-    else window.addEventListener("fb-ready", wire, { once: true });
+    else {
+      window.addEventListener("fb-ready", wire, { once: true });
+      // If Firebase never loads (offline/blocked), the app can't be used —
+      // show the login with a clear message instead of an endless spinner.
+      setTimeout(() => {
+        if (!window.FB || !window.FB.ready) {
+          showLogin();
+          setLoginError("Couldn't reach the sign-in service. Check your connection and reload.");
+        }
+      }, 8000);
+    }
   }
 
   function onCloudSnapshot(cloudDocs) {
@@ -2083,56 +2189,45 @@ document.addEventListener("DOMContentLoaded", () => {
     cloudUpsert(pos);
   }
 
-  // ---- Auth bar UI ----
+  // ---- In-app auth bar (only shown while signed in) ----
   function renderAuthBar() {
-    if (!window.FB || !window.FB.ready) { authBar.innerHTML = ""; return; }
-    if (user) {
-      authBar.innerHTML =
-        `<span class="auth-status"><span class="auth-dot">●</span> Synced as <span class="auth-email">${user.email || "account"}</span></span>
-         <button class="btn-link" id="signOutBtn">Sign out</button>`;
-      document.getElementById("signOutBtn").addEventListener("click", () => window.FB.signOut());
-    } else {
-      authBar.innerHTML =
-        `<span class="auth-status">Sign in to sync across devices</span>
-         <button class="btn-google" id="signInBtn"><span class="g-mark">G</span> Sign in with Google</button>`;
-      document.getElementById("signInBtn").addEventListener("click", doSignIn);
-    }
+    if (!user) { authBar.innerHTML = ""; return; }
+    authBar.innerHTML =
+      `<span class="auth-status"><span class="auth-dot">●</span> Synced as <span class="auth-email">${user.email || "account"}</span></span>
+       <button class="btn-link" id="signOutBtn">Sign out</button>`;
+    document.getElementById("signOutBtn").addEventListener("click", () => window.FB.signOut());
   }
 
-  async function doSignIn() {
+  // ---- Google sign-in from the login gate ----
+  async function doLogin() {
+    if (!window.FB || !window.FB.ready) {
+      setLoginError("Sign-in service isn't loaded yet. Reload the page.");
+      return;
+    }
+    setLoginError("");
+    const btn = document.getElementById("loginGoogleBtn");
+    if (btn) btn.disabled = true;
     try {
-      showAuthError("");
-      await window.FB.signIn();
+      await window.FB.signIn();   // success → onAuth fires → enterApp()
     } catch (e) {
       const code = e && e.code ? e.code : "";
       if (code === "auth/unauthorized-domain") {
-        showAuthError("This domain isn't authorized in Firebase. Add it under Auth → Settings → Authorized domains.");
+        setLoginError("This domain isn't authorized in Firebase (Auth → Settings → Authorized domains).");
       } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
         /* user closed the popup — ignore */
       } else {
-        showAuthError("Sign-in failed: " + (code || e.message || "unknown"));
+        setLoginError("Sign-in failed: " + (code || e.message || "unknown"));
       }
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
-
-  function showAuthError(msg) {
-    let el = document.getElementById("authError");
-    if (!msg) { if (el) el.remove(); return; }
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "authError";
-      el.className = "auth-error";
-      authBar.appendChild(el);
-    }
-    el.textContent = msg;
-  }
+  document.getElementById("loginGoogleBtn").addEventListener("click", doLogin);
 
   // ---- Bootstrap ----
-  portfolio = store.load();          // loads (and migrates legacy single-position state)
-  renderDashboard();                 // instant render from cached quotes
-  showView("dashboard");
-  refreshPortfolio();                // pull fresh quotes now, then it self-schedules
-  initCloud();                       // wire Google sign-in + Firestore sync if available
+  // The app stays behind the login gate; initGate() reveals it only once a
+  // Google sign-in is confirmed (enterApp), and hides it again on sign-out.
+  initGate();
 });
 </script>
 
