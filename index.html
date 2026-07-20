@@ -596,10 +596,23 @@
     /* ---- Portfolio dashboard ---- */
     .portfolio-summary {
       display: flex;
-      align-items: center;
-      gap: 16px;
+      flex-direction: column;
+      gap: 12px;
     }
-    .portfolio-summary .ps-block { flex: 1; }
+    .ps-row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .ps-row-bottom {
+      display: flex;
+      gap: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--ios-border);
+    }
+    .ps-row-bottom .ps-block { flex: 1; }
+    .ps-value-sm { font-size: 19px; }
     .ps-label {
       font-size: 11px;
       font-weight: 600;
@@ -737,16 +750,25 @@
 <div id="dashboardView">
   <div id="authBar" class="auth-bar"></div>
   <div class="card portfolio-summary" id="portfolioSummary">
-    <div class="ps-block">
-      <div class="ps-label">Market Value</div>
-      <div class="ps-value" id="pfValue">$0.00</div>
+    <div class="ps-row-top">
+      <div class="ps-block">
+        <div class="ps-label">Market Value</div>
+        <div class="ps-value" id="pfValue">$0.00</div>
+      </div>
+      <div class="portfolio-pie" id="portfolioPie" title="Time until next auto-refresh"></div>
     </div>
-    <div class="ps-block">
-      <div class="ps-label">Total P/L</div>
-      <div class="ps-value" id="pfPL">$0.00</div>
-      <div class="ps-sub" id="pfROI">0.00%</div>
+    <div class="ps-row-bottom">
+      <div class="ps-block">
+        <div class="ps-label">Today</div>
+        <div class="ps-value ps-value-sm" id="pfDay">$0.00</div>
+        <div class="ps-sub" id="pfDayPct">0.00%</div>
+      </div>
+      <div class="ps-block">
+        <div class="ps-label">Total P/L</div>
+        <div class="ps-value ps-value-sm" id="pfPL">$0.00</div>
+        <div class="ps-sub" id="pfROI">0.00%</div>
+      </div>
     </div>
-    <div class="portfolio-pie" id="portfolioPie" title="Time until next auto-refresh"></div>
   </div>
 
   <div id="positionList"></div>
@@ -883,6 +905,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const pfValueEl = document.getElementById("pfValue");
   const pfPLEl = document.getElementById("pfPL");
   const pfROIEl = document.getElementById("pfROI");
+  const pfDayEl = document.getElementById("pfDay");
+  const pfDayPctEl = document.getElementById("pfDayPct");
   const portfolioPie = document.getElementById("portfolioPie");
   const pfStatus = document.getElementById("pfStatus");
   const addPositionBtn = document.getElementById("addPositionBtn");
@@ -1007,7 +1031,18 @@ document.addEventListener("DOMContentLoaded", () => {
       pl = pos.mode === "long" ? currentValue - totalCost : totalCost - currentValue;
     }
     const roi = totalCost > 0 ? (pl / totalCost) * 100 : 0;
-    return { totalShares, totalCost, price, hasPrice, currentAvg, currentValue, pl, roi };
+
+    // Today's move: quote.d is (current - previous close). A short gains when
+    // the price falls, so the sign inverts. dayBasis = value at yesterday's close.
+    const dChange = (pos.quote && typeof pos.quote.d === "number") ? pos.quote.d : 0;
+    const prevClose = price - dChange;
+    let dayPL = 0, dayBasis = 0;
+    if (totalShares > 0 && price > 0) {
+      dayPL = pos.mode === "long" ? totalShares * dChange : -totalShares * dChange;
+      dayBasis = totalShares * prevClose;
+    }
+
+    return { totalShares, totalCost, price, hasPrice, currentAvg, currentValue, pl, roi, dayPL, dayBasis };
   }
 
   // ---- View switching ----
@@ -1028,10 +1063,16 @@ document.addEventListener("DOMContentLoaded", () => {
         `<div class="card summary-empty">No positions yet. Tap "+ Add Position" to start tracking one.</div>`;
     }
 
-    let totalValue = 0, totalCost = 0, totalPL = 0;
+    let totalValue = 0, totalCost = 0, totalPL = 0, totalDayPL = 0, totalDayBasis = 0;
     portfolio.positions.forEach(pos => {
       const m = computePosition(pos);
-      if (m.hasPrice) { totalValue += m.currentValue; totalCost += m.totalCost; totalPL += m.pl; }
+      if (m.hasPrice) {
+        totalValue += m.currentValue;
+        totalCost += m.totalCost;
+        totalPL += m.pl;
+        totalDayPL += m.dayPL;
+        totalDayBasis += m.dayBasis;
+      }
       positionList.appendChild(buildCard(pos, m));
     });
 
@@ -1041,9 +1082,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     pfValueEl.textContent = `$${fmtMoney(totalValue)}`;
     pfPLEl.textContent = `${sign}$${fmtMoney(Math.abs(totalPL))}`;
-    pfPLEl.className = `ps-value ${plCls}`;
+    pfPLEl.className = `ps-value ps-value-sm ${plCls}`;
     pfROIEl.textContent = `${sign}${Math.abs(totalRoi).toFixed(2)}%`;
     pfROIEl.className = `ps-sub ${plCls}`;
+
+    // Today's change across the portfolio
+    const dayPct = totalDayBasis > 0 ? (totalDayPL / totalDayBasis) * 100 : 0;
+    const dayCls = totalDayPL >= 0 ? "gain" : "loss";
+    const daySign = totalDayPL > 0 ? "+" : (totalDayPL < 0 ? "-" : "");
+    pfDayEl.textContent = `${daySign}$${fmtMoney(Math.abs(totalDayPL))}`;
+    pfDayEl.className = `ps-value ps-value-sm ${dayCls}`;
+    pfDayPctEl.textContent = `${daySign}${Math.abs(dayPct).toFixed(2)}%`;
+    pfDayPctEl.className = `ps-sub ${dayCls}`;
   }
 
   function buildCard(pos, m) {
