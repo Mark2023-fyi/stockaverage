@@ -422,6 +422,32 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 
+    .chart-legend { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--ios-border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 4px 11px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ios-gray);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .legend-chip.active {
+      color: var(--ios-blue);
+      border-color: var(--ios-blue);
+      background: rgba(0, 122, 245, 0.06);
+    }
+    .legend-swatch {
+      width: 16px; height: 0;
+      border-top: 2px dashed var(--ios-border);
+    }
+    .legend-chip.active .legend-swatch { border-top-color: var(--ios-blue); }
+
     .chart-empty {
       height: 240px;
       display: flex;
@@ -864,6 +890,11 @@
       <button id="viewHistory" class="active" onclick="setChartView('history')">Price Today</button>
     </div>
   </div>
+  <div class="chart-legend" id="chartLegend">
+    <button type="button" id="entryLineToggle" class="legend-chip">
+      <span class="legend-swatch"></span>Entry price
+    </button>
+  </div>
   <div class="chart-container">
     <canvas id="averageChart"></canvas>
     <div id="pulseDot" class="pulse-dot"></div>
@@ -918,6 +949,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let chartInstance = null;
   let currentMode = 'long';
   let chartView = 'history';   // 'analysis' | 'history'
+  let showEntryLine = (localStorage.getItem("entryLinePref") ?? "1") === "1";
 
   // ---- Portfolio state ----
   let portfolio = { version: 2, activeId: null, positions: [] };
@@ -1448,6 +1480,17 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("viewHistory").classList.toggle("active", view === 'history');
   }
 
+  // Entry-price line toggle
+  const chartLegend = document.getElementById("chartLegend");
+  const entryLineToggle = document.getElementById("entryLineToggle");
+  entryLineToggle.classList.toggle("active", showEntryLine);
+  entryLineToggle.addEventListener("click", () => {
+    showEntryLine = !showEntryLine;
+    try { localStorage.setItem("entryLinePref", showEntryLine ? "1" : "0"); } catch (e) { /* ignore */ }
+    entryLineToggle.classList.toggle("active", showEntryLine);
+    updateChart(getCalculationData());
+  });
+
   async function fetchQuote(opts = {}) {
     const auto = opts.auto === true;
     const symbol = symbolInput.value.trim().toUpperCase();
@@ -1813,6 +1856,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateChart(data) {
     clearHoverReadout();
     pulseDot.style.display = "none";
+    chartLegend.style.display = "none";   // shown only for price-on-Y charts below
     const { totalShares, marketPrice, currentAvg } = data;
     const canAnalyze = totalShares > 0 && marketPrice > 0;
     const canHistory = priceHistory.length > 0;
@@ -1842,7 +1886,12 @@ document.addEventListener("DOMContentLoaded", () => {
     chartEmpty.style.display = "none";
     const ctx = canvasEl.getContext('2d');
 
+    // The entry-price line only applies to price-on-Y charts, and only once
+    // there are lots to derive an average purchase price from.
+    const hasEntry = totalShares > 0 && currentAvg > 0;
+
     if (chartView === 'history') {
+      chartLegend.style.display = hasEntry ? "flex" : "none";
       chartInstance = renderPriceHistoryChart(ctx);
       return;
     }
@@ -1850,6 +1899,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const isUnderwater = currentMode === 'long'
       ? currentAvg > marketPrice
       : currentAvg < marketPrice;
+    chartLegend.style.display = (isUnderwater && hasEntry) ? "flex" : "none";
     chartInstance = isUnderwater ? renderAveragingChart(ctx, data) : renderProfitChart(ctx, data);
   }
 
@@ -1917,6 +1967,45 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  // Dashed horizontal line marking the average purchase (entry) price.
+  // Gated on `showEntryLine` so the toggle just needs a chart redraw.
+  function entryLinePlugin(price) {
+    return {
+      id: 'entryLine',
+      afterDatasetsDraw(chart) {
+        if (!showEntryLine || price == null || !isFinite(price) || price <= 0) return;
+        const y = chart.scales.y.getPixelForValue(price);
+        const { ctx, chartArea } = chart;
+        if (y < chartArea.top || y > chartArea.bottom) return;
+
+        ctx.save();
+        ctx.lineWidth = 1.75;
+        ctx.strokeStyle = '#007af5';
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, y);
+        ctx.lineTo(chartArea.right, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Tag anchored to the right edge (current-price tag sits on the left).
+        const label = 'Entry $' + price.toFixed(2);
+        ctx.font = "600 11px -apple-system, BlinkMacSystemFont, sans-serif";
+        const boxW = ctx.measureText(label).width + 12;
+        const boxH = 16;
+        const boxX = chartArea.right - boxW;
+        const boxY = Math.min(Math.max(y - boxH / 2, chartArea.top), chartArea.bottom - boxH);
+        ctx.fillStyle = '#007af5';
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.fillStyle = '#ffffff';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, boxX + 6, boxY + boxH / 2);
+        ctx.restore();
+      }
+    };
+  }
+
   // Pins the pulsing HTML dot to the last point of the line and colors it.
   function pulseDotPlugin(color) {
     return {
@@ -1960,9 +2049,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const dotColor = dotIsGain ? '#34c759' : '#ff3b30';
 
+    const avgEntry = getCalculationData().currentAvg;
+
+    // Make sure the entry line is actually in view: if the purchase price sits
+    // outside today's price range, stretch the axis to include it.
+    const prices = points.map(p => p.y);
+    let yMin = Math.min(...prices), yMax = Math.max(...prices);
+    if (showEntryLine && avgEntry > 0) {
+      yMin = Math.min(yMin, avgEntry);
+      yMax = Math.max(yMax, avgEntry);
+    }
+    const pad = (yMax - yMin) * 0.08 || 1;
+
     return new Chart(ctx, {
       type: 'scatter',
-      plugins: [crosshairPlugin, priceLinePlugin(currentPrice), pulseDotPlugin(dotColor)],
+      plugins: [crosshairPlugin, priceLinePlugin(currentPrice), entryLinePlugin(avgEntry), pulseDotPlugin(dotColor)],
       data: {
         datasets: [{
           label: 'Price ($)',
@@ -1995,6 +2096,8 @@ document.addEventListener("DOMContentLoaded", () => {
             ticks: { maxTicksLimit: 6, callback: (v) => fmtTime(v) }
           },
           y: {
+            suggestedMin: yMin - pad,
+            suggestedMax: yMax + pad,
             ticks: { callback: (value) => '$' + value },
             title: { display: true, text: 'Price', font: { size: 10 } }
           }
@@ -2031,7 +2134,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderAveragingChart(ctx, data) {
-    const { totalShares, totalCost, marketPrice } = data;
+    const { totalShares, totalCost, marketPrice, currentAvg } = data;
     document.getElementById("chartTitle").innerText = currentMode === 'long' ? "Averaging Down Curve" : "Averaging Up Curve";
 
     const maxAdditionalShares = totalShares * 2;
@@ -2047,7 +2150,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     return new Chart(ctx, {
       type: 'scatter',
-      plugins: [priceLinePlugin(marketPrice)],
+      plugins: [priceLinePlugin(marketPrice), entryLinePlugin(currentAvg)],
       data: {
         datasets: [{
           label: currentMode === 'long' ? 'New Long Average ($)' : 'New Short Average ($)',
